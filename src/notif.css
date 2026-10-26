@@ -1,0 +1,33 @@
+/* Chuông + chấm đỏ + popup thông báo (dashboard) */
+.sidebar .title-row { display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 16px; }
+.sidebar .title-row h1 { margin: 0; }
+.notif-bell { position: relative; background: rgba(255,255,255,0.12); border: 0; color: #fff; width: 36px; height: 36px; border-radius: 10px; cursor: pointer; font-size: 17px; }
+.notif-bell:hover, .notif-bell.active { background: rgba(255,255,255,0.25); }
+.notif-badge { position: absolute; top: -6px; right: -6px; min-width: 20px; height: 20px; padding: 0 5px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 11px; font-weight: 800; display: flex; align-items: center; justify-content: center; box-sizing: border-box; border: 2px solid var(--teal); }
+.nav-dot { display: inline-block; min-width: 18px; height: 18px; padding: 0 5px; margin-left: 8px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 10px; font-weight: 800; line-height: 18px; text-align: center; box-sizing: border-box; vertical-align: middle; }
+.notif-pill { display: inline-block; min-width: 22px; padding: 1px 7px; border-radius: 999px; background: #ef4444; color: #fff; font-size: 12px; font-weight: 800; text-align: center; vertical-align: middle; }
+.notif-dot-inline { display: inline-block; width: 8px; height: 8px; border-radius: 50%; background: #ef4444; margin-left: 8px; }
+.notif-row { display: flex; gap: 12px; align-items: center; cursor: pointer; margin-bottom: 0; }
+.notif-row.unread { border-color: #fca5a5; background: #fffafa; }
+.notif-toasts { position: fixed; top: 16px; right: 16px; z-index: 9999; display: flex; flex-direction: column; gap: 10px; width: 340px; max-width: calc(100vw - 32px); }
+.notif-toast { display: flex; gap: 10px; align-items: flex-start; background: #fff; border: 1px solid var(--border); border-left: 4px solid #ef4444; border-radius: 12px; padding: 12px; box-shadow: 0 8px 24px rgba(0,0,0,0.18); cursor: pointer; animation: notif-in .2s ease-out; }
+.notif-toast-ico { font-size: 20px; line-height: 1.2; }
+.notif-toast-txt { flex: 1; min-width: 0; display: flex; flex-direction: column; gap: 2px; font-size: 13px; }
+.notif-toast-txt small { color: var(--muted); }
+.notif-toast button { background: none; border: 0; font-size: 20px; line-height: 1; color: var(--muted); cursor: pointer; }
+@keyframes notif-in { from { transform: translateY(-8px); opacity: 0; } to { transform: none; opacity: 1; } }
+
+/* Timeline đơn */
+.flow { margin-top: 12px; border: 1px solid var(--border); border-radius: 12px; padding: 10px 12px; background: #fcfdfc; }
+.flow-title { font-size: 11px; font-weight: 800; color: var(--muted); text-transform: uppercase; letter-spacing: .04em; margin-bottom: 8px; }
+.flow-step { display: flex; gap: 10px; align-items: flex-start; padding: 5px 0; font-size: 12.5px; }
+.flow-mark { flex: 0 0 20px; height: 20px; border-radius: 50%; display: flex; align-items: center; justify-content: center; font-size: 11px; font-weight: 800; background: #e5e7eb; color: #6b7280; }
+.flow-step.done .flow-mark { background: #16a34a; color: #fff; }
+.flow-step.now .flow-mark { background: #f59e0b; color: #fff; }
+.flow-step.late .flow-mark { background: #ef4444; color: #fff; }
+.flow-step .flow-sub { color: var(--muted); font-size: 11.5px; }
+.flow-step.late .flow-sub { color: #b91c1c; font-weight: 700; }
+.who-chip { display: inline-block; font-size: 11px; font-weight: 700; padding: 1px 8px; border-radius: 999px; margin-right: 6px; background: #e5e7eb; color: #4b5563; }
+.who-chip.ok { background: #d1fae5; color: #065f46; }
+.who-chip.wait { background: #fef3c7; color: #92400e; }
+.who-chip.late { background: #fee2e2; color: #991b1b; }

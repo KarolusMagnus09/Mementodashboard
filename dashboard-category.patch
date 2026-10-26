@@ -1,0 +1,13 @@
+diff --git a/src/pages/ApplicationDetail.tsx b/src/pages/ApplicationDetail.tsx
+index 47ad7a8..4277ea7 100644
+--- a/src/pages/ApplicationDetail.tsx
++++ b/src/pages/ApplicationDetail.tsx
+@@ -265,6 +265,8 @@ const CATEGORY_LABEL: Record<string, string> = {
+   rental: "Thuê studio / đồ",
+   makeup: "Makeup",
+   edit: "Chỉnh sửa",
++  editor: "Chỉnh sửa",
++  others: "Khác (tự đặt)",
+ };
+ 
+ function formatVnd(v?: string | number) {

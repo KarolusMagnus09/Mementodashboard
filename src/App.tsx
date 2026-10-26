@@ -7,6 +7,7 @@ import ApplicationDetail from "./pages/ApplicationDetail";
 import Profiles from "./pages/Profiles";
 import Photographers from "./pages/Photographers";
 import Bookings from "./pages/Bookings";
+import Requests from "./pages/Requests";
 import UpdateLogs from "./pages/UpdateLogs";
 import PhotographerHistory from "./pages/PhotographerHistory";
 import BankChanges from "./pages/BankChanges";
@@ -14,8 +15,10 @@ import PaymentLogs from "./pages/PaymentLogs";
 import Reports from "./pages/Reports";
 import Dashboard from "./pages/Dashboard";
 import UserDetail from "./pages/UserDetail";
-
-type Page = "dashboard" | "applications" | "profiles" | "photographers" | "bookings" | "updates" | "bank" | "payments" | "reports";
+import Notifications from "./pages/Notifications";
+import NotifToasts from "./components/NotifToasts";
+import { useAdminNotifications, type Page } from "./hooks/useAdminNotifications";
+import { formatBadge, notifTarget, type AdminNotification } from "./lib/notifications";
 
 export default function App() {
   const [session, setSession] = useState<Session | null>(null);
@@ -56,6 +59,37 @@ export default function App() {
     return () => { cancelled = true; };
   }, [session?.user?.id]);
 
+  // Thông báo (chuông, chấm đỏ, popup): chỉ bật cho admin. Gọi trước mọi return sớm.
+  const isAdmin = profile?.role === "admin";
+  const inSubView = userStack.length > 0 || !!selectedUserId;
+  const notif = useAdminNotifications(session?.user?.id ?? null, isAdmin, inSubView ? "applications" : page);
+
+  function goPage(p: Page) {
+    setPage(p);
+    setUserStack([]);
+    setSelectedUserId(null);
+    setHistoryMode(null);
+  }
+
+  function openNotif(n: AdminNotification) {
+    void notif.markOne(n.id);
+    notif.dismissToast(n.id);
+    const t = notifTarget(n);
+    if (t === "reports") goPage("reports");
+    else if (t === "bookings") goPage("bookings");
+    else if (t === "bank") goPage("bank");
+    else goPage("notifications");
+  }
+
+  const nx: SidebarNotif = {
+    total: notif.total,
+    byPage: notif.byPage,
+    toasts: notif.toasts,
+    onBell: () => goPage("notifications"),
+    onToastOpen: openNotif,
+    onToastClose: notif.dismissToast,
+  };
+
   if (loading) {
     return (
       <div className="login-wrap">
@@ -88,7 +122,7 @@ export default function App() {
     const current = userStack[userStack.length - 1];
     return (
       <div className="layout">
-        <Sidebar page={page} setPage={(p) => { setPage(p); setUserStack([]); setSelectedUserId(null); setHistoryMode(null); }} email={session.user.email} />
+        <Sidebar {...nx} page={page} setPage={(p) => { setPage(p); setUserStack([]); setSelectedUserId(null); setHistoryMode(null); }} email={session.user.email} />
         <div className="main">
           <UserDetail
             key={current}
@@ -105,7 +139,7 @@ export default function App() {
   if (selectedUserId && historyMode) {
     return (
       <div className="layout">
-        <Sidebar page={page} setPage={(p) => { setPage(p); setSelectedUserId(null); setHistoryMode(null); }} email={session.user.email} />
+        <Sidebar {...nx} page={page} setPage={(p) => { setPage(p); setSelectedUserId(null); setHistoryMode(null); }} email={session.user.email} />
         <div className="main">
           <PhotographerHistory
             userId={selectedUserId}
@@ -121,7 +155,7 @@ export default function App() {
   if (selectedUserId) {
     return (
       <div className="layout">
-        <Sidebar page={page} setPage={(p) => { setPage(p); setSelectedUserId(null); setHistoryMode(null); }} email={session.user.email} />
+        <Sidebar {...nx} page={page} setPage={(p) => { setPage(p); setSelectedUserId(null); setHistoryMode(null); }} email={session.user.email} />
         <div className="main">
           <ApplicationDetail
             userId={selectedUserId}
@@ -135,7 +169,7 @@ export default function App() {
 
   return (
     <div className="layout">
-      <Sidebar page={page} setPage={setPage} email={session.user.email} />
+      <Sidebar {...nx} page={page} setPage={setPage} email={session.user.email} />
       <div className="main">
         {page === "dashboard" && (
           <DashboardFrame>
@@ -148,41 +182,70 @@ export default function App() {
         {page === "profiles" && <Profiles key={refreshKey} onOpenUser={(id) => setUserStack([id])} />}
         {page === "photographers" && <Photographers />}
         {page === "bookings" && <Bookings />}
+        {page === "requests" && <Requests />}
         {page === "updates" && <UpdateLogs />}
         {page === "bank" && <BankChanges />}
         {page === "payments" && <PaymentLogs />}
         {page === "reports" && <Reports key={refreshKey} onOpenUser={(id) => setUserStack([id])} />}
+        {page === "notifications" && (
+          <Notifications items={notif.items} onOpen={openNotif} onMarkAll={notif.markAll} onChanged={notif.refresh} />
+        )}
       </div>
     </div>
   );
 }
 
+type SidebarNotif = {
+  total: number;
+  byPage: Partial<Record<Page, number>>;
+  toasts: AdminNotification[];
+  onBell: () => void;
+  onToastOpen: (n: AdminNotification) => void;
+  onToastClose: (id: string) => void;
+};
+
 function Sidebar({
-  page, setPage, email,
+  page, setPage, email, total, byPage, toasts, onBell, onToastOpen, onToastClose,
 }: {
   page: Page;
   setPage: (p: Page) => void;
   email?: string | null;
-}) {
+} & SidebarNotif) {
+  const dot = (p: Page) =>
+    byPage[p] ? <span className="nav-dot">{formatBadge(byPage[p]!)}</span> : null;
   return (
     <aside className="sidebar">
-      <h1>📷 Memento Admin</h1>
+      <div className="title-row">
+        <h1>📷 Memento Admin</h1>
+        <button
+          type="button"
+          className={`notif-bell ${page === "notifications" ? "active" : ""}`}
+          aria-label="Thông báo"
+          onClick={onBell}
+        >
+          🔔
+          {total > 0 && <span className="notif-badge">{formatBadge(total)}</span>}
+        </button>
+      </div>
+      <NotifToasts toasts={toasts} onOpen={onToastOpen} onClose={onToastClose} />
       <button className={`nav ${page === "dashboard" ? "active" : ""}`}
         onClick={() => setPage("dashboard")}>📊 Dashboard</button>
       <button className={`nav ${page === "applications" ? "active" : ""}`}
         onClick={() => setPage("applications")}>Hồ sơ PTG</button>
       <button className={`nav ${page === "reports" ? "active" : ""}`}
-        onClick={() => setPage("reports")}>Xử lý report</button>
+        onClick={() => setPage("reports")}>Xử lý report{dot("reports")}</button>
       <button className={`nav ${page === "profiles" ? "active" : ""}`}
         onClick={() => setPage("profiles")}>Danh sách người dùng</button>
       <button className={`nav ${page === "photographers" ? "active" : ""}`}
         onClick={() => setPage("photographers")}>Marketplace</button>
       <button className={`nav ${page === "bookings" ? "active" : ""}`}
-        onClick={() => setPage("bookings")}>Đơn & thanh toán</button>
+        onClick={() => setPage("bookings")}>Đơn & thanh toán{dot("bookings")}</button>
+      <button className={`nav ${page === "requests" ? "active" : ""}`}
+        onClick={() => setPage("requests")}>📢 Đơn tìm PTG</button>
       <button className={`nav ${page === "payments" ? "active" : ""}`}
         onClick={() => setPage("payments")}>Log giao dịch</button>
       <button className={`nav ${page === "bank" ? "active" : ""}`}
-        onClick={() => setPage("bank")}>Đổi TK ngân hàng</button>
+        onClick={() => setPage("bank")}>Đổi TK ngân hàng{dot("bank")}</button>
       <button className={`nav ${page === "updates" ? "active" : ""}`}
         onClick={() => setPage("updates")}>Log cập nhật</button>
       <div className="foot">

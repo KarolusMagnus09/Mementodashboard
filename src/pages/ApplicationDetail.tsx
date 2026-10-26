@@ -265,6 +265,8 @@ const CATEGORY_LABEL: Record<string, string> = {
   rental: "Thuê studio / đồ",
   makeup: "Makeup",
   edit: "Chỉnh sửa",
+  editor: "Chỉnh sửa",
+  others: "Khác (tự đặt)",
 };
 
 function formatVnd(v?: string | number) {

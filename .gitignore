@@ -54,3 +54,9 @@ Thumbs.db
 # ─── Misc ───────────────────────────────────────────────────────
 *.log
 .cache/
+
+Mementodashboard/
+supabase/.temp/
+.env
+node_modules
+dist

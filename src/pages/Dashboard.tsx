@@ -1,5 +1,6 @@
 import { useCallback, useEffect, useLayoutEffect, useMemo, useRef, useState, type ReactNode } from "react";
 import { supabase } from "../lib/supabase";
+import { billCode } from "../lib/billCode";
 import { ADV_PCT, COMM_PCT, COMMISSION_RATE, formatVnd } from "../lib/payout";
 import {
   BUCKET_LABEL,
@@ -467,7 +468,7 @@ function Lookup({ data, now }: { data: Data; now: Date }) {
                     <tbody>
                       {person.history.slice(0, 50).map((h) => (
                         <tr key={h.id}>
-                          <td className="mono">#{h.id.slice(0, 6)}</td>
+                          <td className="mono">{billCode(h.id)}</td>
                           <td>{h.role}</td>
                           <td>{h.other}</td>
                           <td>{h.pkg}</td>
@@ -507,7 +508,7 @@ const logText = (t: TxRow) => (t.logCount ? `${LOG_LABEL[t.logResult || ""] || t
 function exportCsv(s: Stats) {
   const esc = (v: string | number) => `"${String(v).replace(/"/g, '""')}"`;
   const rows = s.ledger.map((t) =>
-    [t.id, t.customer, t.customerEmail, t.ptg, t.ptgEmail, t.pkg, t.amount, t.fee, fmtTime(t.at), BUCKET_LABEL[t.bucket], logText(t)].map(esc).join(",")
+    [billCode(t.id), t.customer, t.customerEmail, t.ptg, t.ptgEmail, t.pkg, t.amount, t.fee, fmtTime(t.at), BUCKET_LABEL[t.bucket], logText(t)].map(esc).join(",")
   );
   const head = ["Mã đơn", "Khách hàng", "Email khách", "PTG", "Email PTG", "Gói", "Số tiền", "Phí Memento", "Thời gian thanh toán", "Trạng thái", "Log giao dịch"].map(esc).join(",");
   const blob = new Blob(["\ufeff" + [head, ...rows].join("\n")], { type: "text/csv;charset=utf-8" });
@@ -529,7 +530,7 @@ function Ledger({ s, rangeLabel }: { s: Stats; rangeLabel: string }) {
     return s.ledger.filter(
       (t) =>
         (!onlyNoLog || t.logCount === 0) &&
-        (!f || fold(`${t.customer} ${t.customerEmail} ${t.ptg} ${t.ptgEmail} ${t.id} ${t.pkg}`).includes(f))
+        (!f || fold(`${t.customer} ${t.customerEmail} ${t.ptg} ${t.ptgEmail} ${t.id} ${billCode(t.id)} ${billCode(t.id).replace("-", "")} ${t.pkg}`).includes(f))
     );
   }, [s.ledger, q, onlyNoLog]);
 
@@ -582,7 +583,7 @@ function Ledger({ s, rangeLabel }: { s: Stats; rangeLabel: string }) {
                 {rows.slice(0, limit).map((t) => (
                   <tr key={t.id}>
                     <td style={{ color: "var(--d-text3)", whiteSpace: "nowrap" }}>{fmtTime(t.at)}</td>
-                    <td className="mono">#{t.id.slice(0, 6)}</td>
+                    <td className="mono">{billCode(t.id)}</td>
                     <td>
                       <div className="uname">{t.customer}</div>
                       <div className="uemail">{t.customerEmail || "—"}</div>
@@ -935,7 +936,7 @@ export default function Dashboard() {
                       <tbody>
                         {s.recent.map((t) => (
                           <tr key={t.id}>
-                            <td className="mono">#{t.id.slice(0, 6)}</td>
+                            <td className="mono">{billCode(t.id)}</td>
                             <td>
                               <div className="uname">{t.customer}</div>
                               <div className="uemail">{t.customerEmail || "—"}</div>

@@ -44,8 +44,21 @@ type Booking = {
   ptg_success_at: string | null;
   drive_released_at: string | null;
   shoot_done_at: string | null;
+  shoot_confirm_client_at?: string | null;
+  shoot_confirm_ptg_at?: string | null;
+  updated_at?: string | null;
   created_at: string;
+  /** "request" = đơn chụp đăng bài (khách chốt PTG từ bài tìm PTG) · "direct" = đơn khách chọn tôi */
+  source?: "direct" | "request" | null;
+  request_id?: string | null;
 };
+
+type SourceFilter = "all" | "request" | "direct";
+const SOURCE_FILTERS: { id: SourceFilter; label: string }[] = [
+  { id: "all", label: "Mọi loại đơn" },
+  { id: "request", label: "📢 Đơn chụp đăng bài" },
+  { id: "direct", label: "⭐ Đơn khách chọn tôi" },
+];
 
 /** Pipeline stages — chỉ hiện action của bước hiện tại */
 type Stage =
@@ -60,8 +73,13 @@ type Stage =
   | "done"
   | "rejected";
 
-const STAGE_FILTERS: { id: Stage | "all" | "action"; label: string }[] = [
+const SILENCE_HOURS = 48;
+
+type FilterId = Stage | "all" | "action" | "late";
+
+const STAGE_FILTERS: { id: FilterId; label: string }[] = [
   { id: "action", label: "Cần xử lý" },
+  { id: "late", label: `Im lặng > ${SILENCE_HOURS}h` },
   { id: "all", label: "Tất cả" },
   { id: "need_advance", label: `Chuyển cọc ${ADV_PCT}%` },
   { id: "active", label: "Đang hiệu lực" },
@@ -121,13 +139,159 @@ function stageColor(s: Stage) {
   return "#0c3d35";
 }
 
+/* ───────── Timeline từng bước + phát hiện bên im lặng ───────── */
+
+function todayVN(): string {
+  return new Intl.DateTimeFormat("en-CA", { timeZone: "Asia/Ho_Chi_Minh", year: "numeric", month: "2-digit", day: "2-digit" }).format(new Date());
+}
+
+function fmtTime(iso?: string | null): string {
+  if (!iso) return "";
+  return new Date(iso).toLocaleString("vi-VN", { hour: "2-digit", minute: "2-digit", day: "2-digit", month: "2-digit" });
+}
+
+const hoursSince = (iso: string) => (Date.now() - new Date(iso).getTime()) / 3600000;
+
+type FlowStepInfo = {
+  label: string;
+  done: boolean;
+  /** dòng phụ: ai đã / chưa xác nhận */
+  chips?: { who: string; at?: string | null; late?: boolean }[];
+  note?: string;
+  late?: boolean;
+};
+
+type FlowInfo = { steps: FlowStepInfo[]; currentIdx: number; late: boolean; lateText: string | null };
+
+function flowInfo(b: Booking): FlowInfo {
+  const bothShoot = !!(b.shoot_confirm_client_at && b.shoot_confirm_ptg_at) || !!b.shoot_done_at;
+  const bothFinal = !!(b.client_success_at && b.ptg_success_at);
+  const shootDay = (b.booking_date || "").slice(0, 10) <= todayVN();
+  let lateText: string | null = null;
+
+  // Bước 3: xác nhận buổi chụp
+  let shootLate = false;
+  let shootNote: string | undefined;
+  if (!bothShoot) {
+    if (!shootDay) shootNote = `Chưa đến ngày chụp (${b.booking_date})`;
+    else if (b.shoot_confirm_client_at && !b.shoot_confirm_ptg_at) {
+      shootLate = hoursSince(b.shoot_confirm_client_at) > SILENCE_HOURS;
+      if (shootLate) lateText = `PTG chưa xác nhận buổi chụp hơn ${SILENCE_HOURS} giờ`;
+    } else if (b.shoot_confirm_ptg_at && !b.shoot_confirm_client_at) {
+      shootLate = hoursSince(b.shoot_confirm_ptg_at) > SILENCE_HOURS;
+      if (shootLate) lateText = `Khách chưa xác nhận buổi chụp hơn ${SILENCE_HOURS} giờ`;
+    } else {
+      // chưa ai xác nhận: tính từ hết ngày chụp
+      const end = new Date(`${(b.booking_date || "").slice(0, 10)}T23:59:59+07:00`).getTime();
+      shootLate = Date.now() - end > SILENCE_HOURS * 3600000;
+      if (shootLate) lateText = `Chưa bên nào xác nhận buổi chụp, quá ${SILENCE_HOURS} giờ sau ngày chụp`;
+    }
+  }
+
+  // Bước 4: PTG gửi Drive
+  let driveLate = false;
+  if (bothShoot && !b.drive_url) {
+    const a = b.shoot_confirm_client_at || "";
+    const p = b.shoot_confirm_ptg_at || "";
+    const since = (a > p ? a : p) || b.shoot_done_at || b.updated_at || null;
+    if (since && hoursSince(since) > SILENCE_HOURS) {
+      driveLate = true;
+      lateText = `PTG chưa gửi link Drive hơn ${SILENCE_HOURS} giờ`;
+    }
+  }
+
+  // Bước 5: xác nhận hoàn tất
+  let finalLate = false;
+  if (b.drive_url && !bothFinal) {
+    if (b.client_success_at && !b.ptg_success_at && hoursSince(b.client_success_at) > SILENCE_HOURS) {
+      finalLate = true;
+      lateText = `PTG chưa xác nhận hoàn tất hơn ${SILENCE_HOURS} giờ`;
+    } else if (b.ptg_success_at && !b.client_success_at && hoursSince(b.ptg_success_at) > SILENCE_HOURS) {
+      finalLate = true;
+      lateText = `Khách chưa xác nhận hoàn tất hơn ${SILENCE_HOURS} giờ (khách im → vẫn trả PTG, giao ảnh cho khách)`;
+    }
+  }
+
+  const steps: FlowStepInfo[] = [
+    { label: "Khách thanh toán", done: !!b.deposit_paid_at, note: fmtTime(b.deposit_paid_at) },
+    { label: "Admin ứng cọc cho PTG", done: !!b.ptg_advance_paid_at, note: fmtTime(b.ptg_advance_paid_at) },
+    {
+      label: "Xác nhận buổi chụp xong (2 bên)",
+      done: bothShoot,
+      note: shootNote,
+      late: shootLate,
+      chips: bothShoot && !b.shoot_confirm_client_at && !b.shoot_confirm_ptg_at
+        ? [{ who: "Khách", at: b.shoot_done_at }, { who: "PTG", at: b.shoot_done_at }]
+        : [
+            { who: "Khách", at: b.shoot_confirm_client_at, late: shootLate && !b.shoot_confirm_client_at },
+            { who: "PTG", at: b.shoot_confirm_ptg_at, late: shootLate && !b.shoot_confirm_ptg_at },
+          ],
+    },
+    { label: "PTG gửi link Drive", done: !!b.drive_url, late: driveLate, note: fmtTime(b.drive_submitted_at) },
+    {
+      label: "Xác nhận hoàn tất đơn (2 bên)",
+      done: bothFinal,
+      late: finalLate,
+      chips: [
+        { who: "Khách", at: b.client_success_at, late: finalLate && !b.client_success_at },
+        { who: "PTG", at: b.ptg_success_at, late: finalLate && !b.ptg_success_at },
+      ],
+    },
+    { label: "Admin chuyển phần còn lại cho PTG", done: !!b.ptg_final_paid_at, note: fmtTime(b.ptg_final_paid_at) },
+    { label: "Admin gửi Drive cho khách", done: !!b.drive_released_at, note: fmtTime(b.drive_released_at) },
+  ];
+  const idx = steps.findIndex((s) => !s.done);
+  return { steps, currentIdx: idx === -1 ? steps.length : idx, late: !!lateText, lateText };
+}
+
+function FlowTimeline({ b }: { b: Booking }) {
+  const f = flowInfo(b);
+  return (
+    <div className="flow">
+      <div className="flow-title">Tiến trình đơn</div>
+      {f.lateText && (
+        <div style={{ color: "#b91c1c", fontWeight: 700, fontSize: 12, marginBottom: 6 }}>
+          ⚠️ {f.lateText}. Kiểm tra mục «Xử lý report» nếu có báo cáo của đơn này.
+        </div>
+      )}
+      {f.steps.map((s, i) => {
+        const cls = s.done ? "done" : s.late ? "late" : i === f.currentIdx ? "now" : "";
+        return (
+          <div key={s.label} className={`flow-step ${cls}`}>
+            <span className="flow-mark">{s.done ? "✓" : i + 1}</span>
+            <div>
+              <div style={{ fontWeight: s.done || i === f.currentIdx ? 700 : 500 }}>{s.label}</div>
+              {s.chips && (
+                <div style={{ marginTop: 2 }}>
+                  {s.chips.map((c) => (
+                    <span key={c.who} className={`who-chip ${c.at ? "ok" : c.late ? "late" : "wait"}`}>
+                      {c.who}: {c.at ? `✓ ${fmtTime(c.at)}` : "chưa"}
+                    </span>
+                  ))}
+                </div>
+              )}
+              {s.note && <div className="flow-sub">{s.note}</div>}
+            </div>
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** Đơn đã vào giai đoạn chụp trở đi → hiện timeline */
+function showFlow(st: Stage): boolean {
+  return ["active", "handover", "await_dual_confirm", "need_final", "need_release", "done"].includes(st);
+}
+
 export default function Bookings() {
   const [rows, setRows] = useState<Booking[]>([]);
   const [bankLookup, setBankLookup] = useState<BankLookup | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
-  const [filter, setFilter] = useState<Stage | "all" | "action">("action");
+  const [filter, setFilter] = useState<FilterId>("action");
   const [q, setQ] = useState("");
+  const [source, setSource] = useState<SourceFilter>("all");
   const [busy, setBusy] = useState<string | null>(null);
   const [msg, setMsg] = useState<string | null>(null);
   const [expanded, setExpanded] = useState<string | null>(null);
@@ -160,10 +324,15 @@ export default function Bookings() {
 
   const filtered = useMemo(() => {
     let list = rows;
+    if (source !== "all") list = list.filter((b) => (b.source === "request" ? "request" : "direct") === source);
     if (filter === "action") {
-      list = list.filter((b) =>
-        ["need_advance", "need_final", "need_release", "await_dual_confirm"].includes(stageOf(b))
+      list = list.filter(
+        (b) =>
+          ["need_advance", "need_final", "need_release", "await_dual_confirm"].includes(stageOf(b)) ||
+          (showFlow(stageOf(b)) && flowInfo(b).late)
       );
+    } else if (filter === "late") {
+      list = list.filter((b) => showFlow(stageOf(b)) && stageOf(b) !== "done" && flowInfo(b).late);
     } else if (filter !== "all") {
       list = list.filter((b) => stageOf(b) === filter);
     }
@@ -179,14 +348,16 @@ export default function Bookings() {
       );
     }
     return list;
-  }, [rows, filter, q]);
+  }, [rows, filter, q, source]);
 
   const counts = useMemo(() => {
     const c: Record<string, number> = { action: 0 };
     for (const b of rows) {
       const s = stageOf(b);
       c[s] = (c[s] || 0) + 1;
-      if (["need_advance", "need_final", "need_release", "await_dual_confirm"].includes(s)) c.action++;
+      const late = showFlow(s) && s !== "done" && flowInfo(b).late;
+      if (late) c.late = (c.late || 0) + 1;
+      if (["need_advance", "need_final", "need_release", "await_dual_confirm"].includes(s) || late) c.action++;
     }
     return c;
   }, [rows]);
@@ -304,7 +475,7 @@ export default function Bookings() {
         <strong>Thứ tự bắt buộc (không nhảy bước):</strong>
         <br />
         PTG nhận đơn → User thanh toán 100% → <strong>Admin chuyển {ADV_PCT}% cọc PTG</strong> → Đơn hiệu lực →
-        PTG gửi Drive → <strong>2 bên xác nhận hoàn tất</strong> → <strong>Admin chuyển {FINAL_PCT}%</strong> →{" "}
+        <strong>Đến ngày chụp: 2 bên xác nhận buổi chụp</strong> → PTG gửi Drive → <strong>2 bên xác nhận hoàn tất</strong> → <strong>Admin chuyển {FINAL_PCT}%</strong> →{" "}
         <strong>Admin gửi Drive user</strong> → Hoàn thành.
         <br />
         App: sau khi user CK hiện «Đang xử lý đơn»; sau khi admin ứng {ADV_PCT}% hiện «Đơn đang hiệu lực».
@@ -331,6 +502,15 @@ export default function Bookings() {
           >
             {f.label}
             {f.id === "action" ? ` (${counts.action || 0})` : counts[f.id] ? ` (${counts[f.id]})` : ""}
+          </button>
+        ))}
+      </div>
+
+      <div className="tabs" style={{ marginBottom: 12 }}>
+        {SOURCE_FILTERS.map((f) => (
+          <button key={f.id} type="button" className={source === f.id ? "active" : ""} onClick={() => setSource(f.id)}>
+            {f.label}
+            {f.id !== "all" ? ` (${rows.filter((b) => (b.source === "request" ? "request" : "direct") === f.id).length})` : ""}
           </button>
         ))}
       </div>
@@ -377,6 +557,15 @@ export default function Bookings() {
                       }}
                     >
                       {stageLabel(st)}
+                    </span>
+                    <span
+                      style={{
+                        display: "inline-block", marginLeft: 6, fontSize: 11, fontWeight: 700, padding: "3px 10px", borderRadius: 999, marginBottom: 6,
+                        background: b.source === "request" ? "#ede9fe" : "#e0f2fe",
+                        color: b.source === "request" ? "#5b21b6" : "#075985",
+                      }}
+                    >
+                      {b.source === "request" ? "📢 Đơn chụp đăng bài" : "⭐ Khách chọn tôi"}
                     </span>
                     <div style={{ fontWeight: 800, fontSize: 15 }}>{b.package_name}</div>
                     <div className="muted" style={{ fontSize: 12 }}>
@@ -430,6 +619,8 @@ export default function Bookings() {
                   {" · "}
                   Phí {COMM_PCT}%: <strong>{formatVnd(calcFee(total))}</strong>
                 </div>
+
+                {showFlow(st) && <FlowTimeline b={b} />}
 
                 {(st === "need_advance" || st === "need_final") && (
                   <PayoutCard
@@ -531,6 +722,8 @@ export default function Bookings() {
                     <div>Status DB: {b.status}</div>
                     <div>deposit_paid_at: {b.deposit_paid_at || "—"}</div>
                     <div>ptg_advance_paid_at: {b.ptg_advance_paid_at || "—"}</div>
+                    <div>shoot_confirm_client_at: {b.shoot_confirm_client_at || "—"}</div>
+                    <div>shoot_confirm_ptg_at: {b.shoot_confirm_ptg_at || "—"}</div>
                     <div>client_success_at: {b.client_success_at || "—"}</div>
                     <div>ptg_success_at: {b.ptg_success_at || "—"}</div>
                     <div>ptg_final_paid_at: {b.ptg_final_paid_at || "—"}</div>
